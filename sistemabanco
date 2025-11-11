@@ -77,6 +77,11 @@
     str_lbl_limite:     .asciiz "Limite Total:   R$ "
     str_lbl_fatura:     .asciiz "Fatura Atual:   R$ "
     str_lbl_disponivel: .asciiz "Disponivel Cred:R$ "
+    str_sucesso_data:   .asciiz "Data e hora do sistema atualizadas.\n"
+    str_data_atual:     .asciiz "Data/Hora atual: "
+    str_barra:          .asciiz "/"
+    str_dois_pontos:    .asciiz ":"
+    str_espaco:         .asciiz " "
     
     # --- Comandos Reconhecidos pelo Sistema ---
     # Estas strings são usadas para comparar com o que o usuário digitou.
@@ -92,7 +97,17 @@
     cmd_conta_format:   .asciiz "conta_format"
     cmd_conta_fechar:   .asciiz "conta_fechar"
     cmd_conta_info:     .asciiz "conta_info"
+    cmd_data_hora:      .asciiz "data_hora"
     cmd_sair:           .asciiz "sair"
+    
+    # --- RELÓGIO DO SISTEMA ---
+    # Inicializa com uma data padrão (ex: 01/01/2025 12:00:00)
+    DATA_DIA:   .word 1
+    DATA_MES:   .word 1
+    DATA_ANO:   .word 2025
+    HORA_H:     .word 12
+    HORA_M:     .word 0
+    HORA_S:     .word 0
     
 .text
 .globl main
@@ -178,6 +193,11 @@ shell_loop:
     la $a1, cmd_conta_fechar
     jal strcmp
     beq $v0, 0, exec_conta_fechar
+
+    la $a0, arg0
+    la $a1, cmd_data_hora
+    jal strcmp
+    beq $v0, 0, exec_data_hora
 
     li $v0, 4
     la $a0, str_erro_cmd
@@ -1125,6 +1145,64 @@ fechar_erro_cli:
     syscall
 
 fechar_fim:
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    j shell_loop
+    
+# ==============================================================================
+# COMANDO: AJUSTAR DATA E HORA
+# Formato: data_hora-<DDMMAAAA>-<HHMMSS>
+# ==============================================================================
+exec_data_hora:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+
+    # 1. Converte Data (arg1) para inteiro
+    la $a0, arg1
+    jal atoi
+    move $t0, $v0           # $t0 = DDMMAAAA (ex: 10112025)
+
+    # 2. Extrai Dia, Mês, Ano usando divisões
+    # Ano = DDMMAAAA % 10000
+    li $t1, 10000
+    div $t0, $t1
+    mfhi $t2                # $t2 = AAAA (2025)
+    sw $t2, DATA_ANO
+    mflo $t0                # $t0 = DDMM (1011)
+
+    # Mês = DDMM % 100
+    li $t1, 100
+    div $t0, $t1
+    mfhi $t2                # $t2 = MM (11)
+    sw $t2, DATA_MES
+    mflo $t2                # $t2 = DD (10)
+    sw $t2, DATA_DIA
+
+    # 3. Converte Hora (arg2) para inteiro
+    la $a0, arg2
+    jal atoi
+    move $t0, $v0           # $t0 = HHMMSS (ex: 143000)
+
+    # 4. Extrai Hora, Minuto, Segundo
+    # Segundo = HHMMSS % 100
+    li $t1, 100
+    div $t0, $t1
+    mfhi $t2                # $t2 = SS (00)
+    sw $t2, HORA_S
+    mflo $t0                # $t0 = HHMM (1430)
+
+    # Minuto = HHMM % 100
+    div $t0, $t1
+    mfhi $t2                # $t2 = MM (30)
+    sw $t2, HORA_M
+    mflo $t2                # $t2 = HH (14)
+    sw $t2, HORA_H
+
+    # 5. Feedback
+    li $v0, 4
+    la $a0, str_sucesso_data
+    syscall
+
     lw $ra, 0($sp)
     addi $sp, $sp, 4
     j shell_loop
