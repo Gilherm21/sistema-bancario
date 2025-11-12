@@ -46,7 +46,7 @@
     arg3:           .space 64       # Armazena o terceiro argumento (ex: Nome)
     buffer_resp:        .space 4        # Pequeno buffer para ler a resposta (s/n) na exclusão do histórico
 
-    # --- Strings de Interface (Mensagens para o Usuário) ---
+    # --- Mensagens para o Usuário ---
     str_banner:         .asciiz "\nSmartBank-shell>> "   # Prompt do terminal
     str_erro_cmd:       .asciiz "Comando invalido\n"
     str_sucesso_cad:    .asciiz "Cliente cadastrado com sucesso. Número da conta: "
@@ -82,8 +82,9 @@
     str_barra:          .asciiz "/"
     str_dois_pontos:    .asciiz ":"
     str_espaco:         .asciiz " "
+    str_juros:          .asciiz "JUROS:  R$ "
     
-    # --- Comandos Reconhecidos pelo Sistema ---
+    # --- Comandos do Sistema ---
     # Estas strings são usadas para comparar com o que o usuário digitou.
     cmd_cadastrar:       .asciiz "conta_cadastrar"
     cmd_debito_extrato:  .asciiz "debito_extrato"
@@ -111,6 +112,10 @@
     HORA_S:     .word 0
     LAST_TIME_CHECK: .word 0 # Guarda o tempo (em milissegundos) da última atualização
     
+    # --- Variáveis para Cálculo de Juros ---
+    # Guarda o valor do HORA_S da última vez que o juros foi calculado
+    LAST_JUROS_TIME_MS: .word 0      # Guarda o tempo total em MS do último cálculo de juros
+    
 .text
 .globl main
 
@@ -118,15 +123,16 @@
 # MAIN SHELL LOOP
 # ==============================================================================
 main:
-    # --- INICIALIZA O RELÓGIO ---
+    # --- INICIALIZA O RELÓGIO E JUROS ---
     # Pega a hora atual do sistema (syscall 30)
     li $v0, 30
     syscall
     # Salva como a "última vez checada" para evitar um pulo gigante no tempo
     sw $a0, LAST_TIME_CHECK
+    sw $a0, LAST_JUROS_TIME_MS
 shell_loop:
     # ==================================================================
-    # ATUALIZADOR DE RELÓGIO
+    # MOTOR DO RELÓGIO
     # ==================================================================
     li $v0, 30
     syscall
@@ -187,6 +193,18 @@ clock_save:
     sw $t8, DATA_DIA
 
 clock_fim:
+
+    # GATILHO DE JUROS
+    lw $t1, LAST_JUROS_TIME_MS  # $t1 = Hora do Último Juros (MS)
+    sub $t2, $t0, $t1           # $t2 = Delta (MS)
+
+    li $t3, 60000               # 60 segundos = 60000 milissegundos
+    blt $t2, $t3, juros_skip    # Se o delta for MENOR que 60s, pula
+
+    jal exec_calcula_juros      # Roda a função que aplica juros em todos
+    sw $t0, LAST_JUROS_TIME_MS  # Atualiza a hora do último juros para AGORA
+
+juros_skip:
     # ==================================================================
     
     li $v0, 4
@@ -614,55 +632,70 @@ exec_credito_extrato:
     addi $sp, $sp, -4
     sw $ra, 0($sp)
 
-    # 1. Busca cliente
     la $a0, arg1
     jal busca_cliente
     move $s0, $v0
     li $t1, -1
     beq $s0, $t1, extc_erro_cli
 
-    # 2. Imprime Cabeçalho
     li $v0, 4
     la $a0, str_ext_cred_header
     syscall
 
-    # 3. Lê quantidade de transações
     la $a0, HISTORICO_CREDITO_QTD
     mul $t1, $s0, 4
     addu $a0, $a0, $t1
-    lw $s1, 0($a0)          # $s1 = Quantidade total
-
+    lw $s1, 0($a0)
     beq $s1, $zero, extc_vazio
 
-    # 4. Loop de impressão
-    li $s2, 0               # Contador do loop
+    li $s2, 0
 extc_loop:
     bge $s2, $s1, extc_fim_loop
 
-    mul $t2, $s0, 200       # Base do cliente
-    mul $t3, $s2, 4         # Offset da transação
+    mul $t2, $s0, 200
+    mul $t3, $s2, 4
     add $t2, $t2, $t3
+
+    # Carrega o VALOR
     la $t4, HISTORICO_CREDITO_VALOR
     addu $t4, $t4, $t2
-    lw $s3, 0($t4)          # $s3 = Valor da transação
+    lw $s3, 0($t4)          # $s3 = Valor
 
-    # Se valor < 0, é COMPRA. Se valor > 0, é PAGAMENTO.
-    blt $s3, $zero, extc_print_compra
+    # Carrega o TIPO
+    la $t4, HISTORICO_CREDITO_TIPO
+    addu $t4, $t4, $t2
+    lw $s4, 0($t4)          # $s4 = Tipo (1, 2 ou 3)
 
-    # [PAGAMENTO]
+    # Verifica o TIPO para imprimir a string certa
+    li $t5, 1
+    beq $s4, $t5, extc_print_compra
+    li $t5, 2
+    beq $s4, $t5, extc_print_pagto
+    li $t5, 3
+    beq $s4, $t5, extc_print_juros
+    j extc_proximo          # Se tipo for desconhecido (0?), pula
+
+extc_print_compra:
     li $v0, 4
-    la $a0, str_pagto
+    la $a0, str_compra      # "COMPRA: R$ "
     syscall
-    move $a0, $s3
+    neg $a0, $s3            # Inverte (era negativo)
     jal print_dinheiro
     j extc_proximo
 
-extc_print_compra:
-    # [COMPRA]
+extc_print_pagto:
     li $v0, 4
-    la $a0, str_compra
+    la $a0, str_pagto       # "PAGTO:  R$ "
     syscall
-    neg $a0, $s3            # Inverte para mostrar positivo
+    move $a0, $s3           # Imprime (positivo)
+    jal print_dinheiro
+    j extc_proximo
+
+extc_print_juros:
+    li $v0, 4
+    la $a0, str_juros       # "JUROS:  R$ "
+    syscall
+    move $a0, $s3           # Imprime (positivo)
     jal print_dinheiro
 
 extc_proximo:
@@ -674,7 +707,7 @@ extc_fim_loop:
 
 extc_vazio:
     li $v0, 4
-    la $a0, str_sem_transacoes # Reusa string genérica
+    la $a0, str_sem_transacoes
     syscall
     j extc_fim
 
@@ -851,6 +884,7 @@ exec_transf_credito:
     # Na origem, registra como uso de CRÉDITO (negativo para indicar gasto)
     move $a0, $s0
     neg $a1, $s1
+    li $a2, 1
     jal registra_credito
 
     # No destino, é um depósito normal em conta corrente
@@ -954,6 +988,7 @@ pgto_efetiva:
     # 5. REGISTRA NO HISTÓRICO DE CRÉDITO (Valor positivo = pagamento)
     move $a0, $s0
     move $a1, $s1
+    li $a2, 2
     jal registra_credito
 
     # Feedback
@@ -1350,6 +1385,59 @@ exec_ver_hora:
     lw $ra, 0($sp)
     addi $sp, $sp, 4
     j shell_loop
+    
+# ==============================================================================
+# COMANDO: CALCULO DE JUROS
+# Objetivo: Aplicar 1% de juros na fatura de TODOS os clientes a cada minuto.
+# ==============================================================================
+exec_calcula_juros:
+    addi $sp, $sp, -16
+    sw $ra, 12($sp)
+    sw $s0, 8($sp)          # Índice do cliente (loop)
+    sw $s1, 4($sp)          # Fatura atual
+    sw $s2, 0($sp)          # Valor do juros
+
+    li $s0, 0               # Inicia loop no cliente 0
+juros_loop:
+    lw $t0, MAX_CLIENTES
+    bge $s0, $t0, juros_fim_loop # Se i >= 50, termina
+
+    # 1. Carrega fatura do cliente [i]
+    la $a0, CLIENTES_FATURA
+    mul $t1, $s0, 4
+    addu $a0, $a0, $t1
+    lw $s1, 0($a0)          # $s1 = Fatura atual
+
+    # 2. Se fatura <= 0, não faz nada, pula para próximo cliente
+    ble $s1, $zero, juros_proximo
+
+    # 3. Calcula juros (1%)
+    # Juros = (Fatura * 1) / 100
+    li $t2, 100
+    div $s1, $t2
+    mflo $s2                # $s2 = Valor do juros
+
+    # 4. Soma juros à fatura
+    add $s1, $s1, $s2
+    sw $s1, 0($a0)          # Salva nova fatura
+
+    # 5. Registra no extrato de crédito
+    move $a0, $s0           # Índice do cliente
+    move $a1, $s2           # Valor do juros (positivo)
+    li $a2, 3
+    jal registra_credito
+
+juros_proximo:
+    addi $s0, $s0, 1        # Próximo cliente
+    j juros_loop
+
+juros_fim_loop:
+    lw $s2, 0($sp)
+    lw $s1, 4($sp)
+    lw $s0, 8($sp)
+    lw $ra, 12($sp)
+    addi $sp, $sp, 16
+    jr $ra
 
 # ==============================================================================
 # PARSER E HELPERS
@@ -1584,28 +1672,36 @@ registra_credito:
     sw $t1, 4($sp)
     sw $t2, 8($sp)
 
-    move $t0, $a0
-    move $t1, $a1
+    move $t0, $a0           # $t0 = índice
+    move $t1, $a1           # $t1 = valor
+    move $t2, $a2           # $t2 = tipo
 
     # 1. Verifica qtd de transações
-    la $t2, HISTORICO_CREDITO_QTD
-    mul $t3, $t0, 4
-    addu $t2, $t2, $t3
-    lw $t4, 0($t2)
-    li $t5, 50
-    bge $t4, $t5, rc_fim
+    la $t3, HISTORICO_CREDITO_QTD
+    mul $t4, $t0, 4
+    addu $t3, $t3, $t4
+    lw $t5, 0($t3)          # $t5 = Qtd atual
+    li $t6, 50
+    bge $t5, $t6, rc_fim
 
-    # 2. Salva o valor
-    mul $t5, $t0, 200       # Offset base do cliente
-    mul $t6, $t4, 4         # Offset da transação
-    add $t5, $t5, $t6
-    la $t7, HISTORICO_CREDITO_VALOR
-    addu $t7, $t7, $t5
-    sw $t1, 0($t7)
+    # 2. Calcula endereço base
+    mul $t6, $t0, 200       # Offset base do cliente (idx * 50 * 4)
+    mul $t7, $t5, 4         # Offset da transação (qtd * 4)
+    add $t6, $t6, $t7       # Offset total
 
-    # 3. Incrementa contador
-    addi $t4, $t4, 1
-    sw $t4, 0($t2)
+    # 3. Salva o VALOR
+    la $t8, HISTORICO_CREDITO_VALOR
+    addu $t8, $t8, $t6
+    sw $t1, 0($t8)
+
+    # 4. Salva o TIPO
+    la $t8, HISTORICO_CREDITO_TIPO
+    addu $t8, $t8, $t6
+    sw $t2, 0($t8)
+
+    # 5. Incrementa contador
+    addi $t5, $t5, 1
+    sw $t5, 0($t3)
 
 rc_fim:
     lw $t2, 8($sp)
