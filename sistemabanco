@@ -85,20 +85,21 @@
     
     # --- Comandos Reconhecidos pelo Sistema ---
     # Estas strings são usadas para comparar com o que o usuário digitou.
-    cmd_cadastrar:      .asciiz "conta_cadastrar"
-    cmd_debito_extrato: .asciiz "debito_extrato"
+    cmd_cadastrar:       .asciiz "conta_cadastrar"
+    cmd_debito_extrato:  .asciiz "debito_extrato"
     cmd_credito_extrato: .asciiz "credito_extrato"
-    cmd_depositar:      .asciiz "depositar"
-    cmd_sacar:          .asciiz "sacar"
-    cmd_transferir:     .asciiz "transferir_debito"
-    cmd_transf_credito: .asciiz "transferir_credito"
+    cmd_depositar:       .asciiz "depositar"
+    cmd_sacar:           .asciiz "sacar"
+    cmd_transferir:      .asciiz "transferir_debito"
+    cmd_transf_credito:  .asciiz "transferir_credito"
     cmd_pagar_fatura:    .asciiz "pagar_fatura"
-    cmd_alterar_limite: .asciiz "alterar_limite"
-    cmd_conta_format:   .asciiz "conta_format"
-    cmd_conta_fechar:   .asciiz "conta_fechar"
-    cmd_conta_info:     .asciiz "conta_info"
-    cmd_data_hora:      .asciiz "data_hora"
-    cmd_sair:           .asciiz "sair"
+    cmd_alterar_limite:  .asciiz "alterar_limite"
+    cmd_conta_format:    .asciiz "conta_format"
+    cmd_conta_fechar:    .asciiz "conta_fechar"
+    cmd_conta_info:      .asciiz "conta_info"
+    cmd_data_hora:       .asciiz "data_hora"
+    cmd_ver_hora:        .asciiz "ver_hora"
+    cmd_sair:            .asciiz "sair"
     
     # --- RELÓGIO DO SISTEMA ---
     # Inicializa com uma data padrão (ex: 01/01/2025 12:00:00)
@@ -117,38 +118,75 @@
 # MAIN SHELL LOOP
 # ==============================================================================
 main:
+    # --- INICIALIZA O RELÓGIO ---
+    # Pega a hora atual do sistema (syscall 30)
+    li $v0, 30
+    syscall
+    # Salva como a "última vez checada" para evitar um pulo gigante no tempo
+    sw $a0, LAST_TIME_CHECK
 shell_loop:
     # ==================================================================
     # ATUALIZADOR DE RELÓGIO
     # ==================================================================
-    # 1. Pega a hora ATUAL do sistema (em milissegundos)
     li $v0, 30
     syscall
     move $t0, $a0           # $t0 = Hora Atual (new)
-
-    # 2. Carrega a hora da ÚLTIMA checagem
     lw $t1, LAST_TIME_CHECK # $t1 = Hora Antiga (old)
+    sub $t2, $t0, $t1       # $t2 = Delta (milisegundos)
     
-    # 3. Calcula a diferença (delta)
-    sub $t2, $t0, $t1       # $t2 = Delta (em milissegundos)
-    
-    # 4. Converte delta para segundos
+    # Se delta for 0 ou negativo (pouco provável), pula tudo
+    ble $t2, $zero, clock_fim 
+
     li $t3, 1000
     div $t2, $t3
-    mflo $t4                # $t4 = Segundos que se passaram desde a última vez
+    mflo $t4                # $t4 = Segundos que se passaram
 
-    # 5. Salva a hora atual (new) como a "última checagem" para o próximo loop
+    # Se 0 segundos se passaram, não faz nada
+    beq $t4, $zero, clock_fim
+
+    # Salva a hora atual (new) como a "última checagem"
     sw $t0, LAST_TIME_CHECK
 
-    # 6. Adiciona os segundos que passaram ao nosso relógio
-    # (Não vamos nos preocupar em virar minutos/horas ainda, 
-    # apenas somar os segundos por simplicidade)
+    # Carrega relógio atual do banco
     lw $t5, HORA_S
-    add $t5, $t5, $t4       # SegundosAtuais + SegundosPassados
+    lw $t6, HORA_M
+    lw $t7, HORA_H
+    lw $t8, DATA_DIA
+
+    # Adiciona os segundos que passaram
+    add $t5, $t5, $t4
+
+    # --- Propagação de Tempo ---
+clock_loop_s:
+    # Enquanto Segundos >= 60...
+    blt $t5, 60, clock_loop_m 
+    sub $t5, $t5, 60        # Tira 60 dos segundos
+    add $t6, $t6, 1         # Adiciona 1 aos minutos
+    j clock_loop_s
+
+clock_loop_m:
+    # Enquanto Minutos >= 60...
+    blt $t6, 60, clock_loop_h
+    sub $t6, $t6, 60        # Tira 60 dos minutos
+    add $t7, $t7, 1         # Adiciona 1 às horas
+    j clock_loop_m
+
+clock_loop_h:
+    # Enquanto Horas >= 24...
+    blt $t7, 24, clock_save
+    sub $t7, $t7, 24        # Tira 24 das horas
+    add $t8, $t8, 1         # Adiciona 1 ao dia
+    j clock_loop_h
+    # (Não vamos propagar dias para meses por ser muito complexo)
+
+clock_save:
+    # Salva os novos valores
     sw $t5, HORA_S
-    # (Para ficar 100%, teríamos que checar se HORA_S > 59, 
-    # zerar e somar 1 em HORA_M, etc. 
-    # Por enquanto, isso cumpre a lógica de "atualizar")
+    sw $t6, HORA_M
+    sw $t7, HORA_H
+    sw $t8, DATA_DIA
+
+clock_fim:
     # ==================================================================
     
     li $v0, 4
@@ -232,6 +270,11 @@ shell_loop:
     la $a1, cmd_data_hora
     jal strcmp
     beq $v0, 0, exec_data_hora
+
+    la $a0, arg0
+    la $a1, cmd_ver_hora
+    jal strcmp
+    beq $v0, 0, exec_ver_hora
 
     li $v0, 4
     la $a0, str_erro_cmd
@@ -1241,6 +1284,67 @@ exec_data_hora:
     # 5. Feedback
     li $v0, 4
     la $a0, str_sucesso_data
+    syscall
+
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    j shell_loop
+    
+# ==============================================================================
+# COMANDO: VER HORA ATUAL
+# Formato: ver_hora
+# ==============================================================================
+exec_ver_hora:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+
+    # Imprime "Data/Hora atual: "
+    li $v0, 4
+    la $a0, str_data_atual
+    syscall
+
+    # --- Imprime a Data (DD/MM/AAAA) ---
+    lw $a0, DATA_DIA
+    li $v0, 1
+    syscall
+    li $v0, 4
+    la $a0, str_barra
+    syscall
+    
+    lw $a0, DATA_MES
+    li $v0, 1
+    syscall
+    li $v0, 4
+    la $a0, str_barra
+    syscall
+    
+    lw $a0, DATA_ANO
+    li $v0, 1
+    syscall
+    li $v0, 4
+    la $a0, str_espaco
+    syscall
+
+    # --- Imprime a Hora (HH:MM:SS) ---
+    lw $a0, HORA_H
+    li $v0, 1
+    syscall
+    li $v0, 4
+    la $a0, str_dois_pontos
+    syscall
+    
+    lw $a0, HORA_M
+    li $v0, 1
+    syscall
+    li $v0, 4
+    la $a0, str_dois_pontos
+    syscall
+
+    lw $a0, HORA_S
+    li $v0, 1
+    syscall
+    li $v0, 4
+    la $a0, str_newline
     syscall
 
     lw $ra, 0($sp)
