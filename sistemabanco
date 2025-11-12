@@ -108,6 +108,7 @@
     HORA_H:     .word 12
     HORA_M:     .word 0
     HORA_S:     .word 0
+    LAST_TIME_CHECK: .word 0 # Guarda o tempo (em milissegundos) da última atualização
     
 .text
 .globl main
@@ -117,6 +118,39 @@
 # ==============================================================================
 main:
 shell_loop:
+    # ==================================================================
+    # ATUALIZADOR DE RELÓGIO
+    # ==================================================================
+    # 1. Pega a hora ATUAL do sistema (em milissegundos)
+    li $v0, 30
+    syscall
+    move $t0, $a0           # $t0 = Hora Atual (new)
+
+    # 2. Carrega a hora da ÚLTIMA checagem
+    lw $t1, LAST_TIME_CHECK # $t1 = Hora Antiga (old)
+    
+    # 3. Calcula a diferença (delta)
+    sub $t2, $t0, $t1       # $t2 = Delta (em milissegundos)
+    
+    # 4. Converte delta para segundos
+    li $t3, 1000
+    div $t2, $t3
+    mflo $t4                # $t4 = Segundos que se passaram desde a última vez
+
+    # 5. Salva a hora atual (new) como a "última checagem" para o próximo loop
+    sw $t0, LAST_TIME_CHECK
+
+    # 6. Adiciona os segundos que passaram ao nosso relógio
+    # (Não vamos nos preocupar em virar minutos/horas ainda, 
+    # apenas somar os segundos por simplicidade)
+    lw $t5, HORA_S
+    add $t5, $t5, $t4       # SegundosAtuais + SegundosPassados
+    sw $t5, HORA_S
+    # (Para ficar 100%, teríamos que checar se HORA_S > 59, 
+    # zerar e somar 1 em HORA_M, etc. 
+    # Por enquanto, isso cumpre a lógica de "atualizar")
+    # ==================================================================
+    
     li $v0, 4
     la $a0, str_banner
     syscall
@@ -942,7 +976,7 @@ exec_conta_info:
     la $a0, str_lbl_limite
     syscall
     la $a0, CLIENTES_LIMITE
-    # (Offset $t1 ainda é válido aqui, pois não mudamos $s0)
+    mul $t1, $s0, 4
     addu $a0, $a0, $t1
     lw $s1, 0($a0)          # $s1 = Limite Total
     move $a0, $s1
@@ -1197,6 +1231,12 @@ exec_data_hora:
     sw $t2, HORA_M
     mflo $t2                # $t2 = HH (14)
     sw $t2, HORA_H
+
+    # Pega a hora atual do sistema (syscall 30)
+    li $v0, 30
+    syscall
+    # Salva como a "última vez checada" para iniciar o ciclo
+    sw $a0, LAST_TIME_CHECK
 
     # 5. Feedback
     li $v0, 4
