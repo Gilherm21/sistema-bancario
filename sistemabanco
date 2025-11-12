@@ -85,8 +85,6 @@
     str_dois_pontos:    .asciiz ":"
     str_espaco:         .asciiz " "
     str_juros:          .asciiz "JUROS:  R$ "
-    str_confirma_fmt_g: .asciiz "TEM CERTEZA QUE DESEJA APAGAR O BANCO INTEIRO? (s/n): "
-    str_sucesso_fmt_g:  .asciiz "Banco de dados zerado com sucesso.\n"
     
     # --- Comandos do Sistema ---
     # Estas strings são usadas para comparar com o que o usuário digitou.
@@ -104,7 +102,6 @@
     cmd_conta_info:      .asciiz "conta_info"
     cmd_data_hora:       .asciiz "data_hora"
     cmd_ver_hora:        .asciiz "ver_hora"
-    cmd_formatar:       .asciiz "formatar"
     cmd_sair:            .asciiz "sair"
     
     # --- RELÓGIO DO SISTEMA ---
@@ -120,6 +117,21 @@
     # --- Variáveis para Cálculo de Juros ---
     # Guarda o valor do HORA_S da última vez que o juros foi calculado
     LAST_JUROS_TIME_MS: .word 0      # Guarda o tempo total em MS do último cálculo de juros
+    
+    # --- FORMATAR, SALVAR E RECARREGAR ---
+    # 1. Formatar
+    str_confirma_fmt_g: .asciiz "TEM CERTEZA QUE DESEJA APAGAR O BANCO INTEIRO? (s/n): "
+    str_sucesso_fmt_g:  .asciiz "Banco de dados zerado com sucesso.\n"
+    cmd_formatar:       .asciiz "formatar"
+    
+    # 2. Salvar
+    str_sucesso_salvar: .asciiz "Dados salvos com sucesso em banco.dat\n"
+    str_erro_salvar:    .asciiz "Falha ao abrir/salvar o arquivo.\n"
+    cmd_salvar:         .asciiz "salvar"
+    filename:           .asciiz "banco.dat"
+    
+    # 3. Recarregar
+    
     
 .text
 .globl main
@@ -303,6 +315,11 @@ juros_skip:
     la $a1, cmd_formatar
     jal strcmp
     beq $v0, 0, exec_formatar
+
+    la $a0, arg0
+    la $a1, cmd_salvar
+    jal strcmp
+    beq $v0, 0, exec_salvar
 
     la $a0, arg0
     la $a1, cmd_sair
@@ -1502,6 +1519,151 @@ fmt_g_cancela:
 fmt_g_fim:
     lw $ra, 0($sp)
     addi $sp, $sp, 4
+    j shell_loop
+# ==============================================================================
+# COMANDO: SALVAR
+# Formato: salvar
+# Objetivo: Gravar o estado atual do banco em um arquivo "banco.dat"
+# ==============================================================================
+exec_salvar:
+    addi $sp, $sp, -8
+    sw $ra, 4($sp)
+    sw $s0, 0($sp)          # Salvaremos o "File Descriptor" em $s0
+
+    # 1. ABRIR O ARQUIVO (Syscall 13)
+    # Abre o arquivo para ESCRITA (flag = 1) e com permissão padrão (mode = 0)
+    li $v0, 13              # Syscall: Abrir arquivo
+    la $a0, filename        # $a0 = Endereço do nome do arquivo
+    li $a1, 1               # $a1 = Flags (1 = Escrita, 0 = Leitura)
+    li $a2, 0               # $a2 = Modo (ignorado no MARS, mas 0 por padrão)
+    syscall
+    
+    # $v0 retorna o "File Descriptor" (FD). Se for < 0, deu erro.
+    blt $v0, $zero, salvar_erro
+    move $s0, $v0           # Salva o FD (número do arquivo aberto) em $s0
+
+    # 2. ESCREVER OS DADOS NO ARQUIVO (Syscall 15)
+    # Agora, vamos "despejar" cada um dos nossos vetores no arquivo, um por um.
+    # Syscall 15: li $v0, 15 | $a0 = FD | $a1 = Endereço na memória | $a2 = Qtd de bytes
+
+    # --- Bloco 1: QTD_CLIENTES (4 bytes) ---
+    li $v0, 15
+    move $a0, $s0
+    la $a1, QTD_CLIENTES
+    li $a2, 4               # 1 word = 4 bytes
+    syscall
+    
+    # --- Bloco 2: CLIENTES_CPF (600 bytes) ---
+    li $v0, 15
+    move $a0, $s0
+    la $a1, CLIENTES_CPF
+    li $a2, 600
+    syscall
+
+    # --- Bloco 3: CLIENTES_CONTA (350 bytes) ---
+    li $v0, 15
+    move $a0, $s0
+    la $a1, CLIENTES_CONTA
+    li $a2, 350
+    syscall
+    
+    # --- Bloco 4: CLIENTES_NOME (2500 bytes) ---
+    li $v0, 15
+    move $a0, $s0
+    la $a1, CLIENTES_NOME
+    li $a2, 2500
+    syscall
+
+    # --- Bloco 5: CLIENTES_SALDO (50 * 4 = 200 bytes) ---
+    li $v0, 15
+    move $a0, $s0
+    la $a1, CLIENTES_SALDO
+    li $a2, 200
+    syscall
+    
+    # --- Bloco 6: CLIENTES_LIMITE (200 bytes) ---
+    li $v0, 15
+    move $a0, $s0
+    la $a1, CLIENTES_LIMITE
+    li $a2, 200
+    syscall
+    
+    # --- Bloco 7: CLIENTES_FATURA (200 bytes) ---
+    li $v0, 15
+    move $a0, $s0
+    la $a1, CLIENTES_FATURA
+    li $a2, 200
+    syscall
+    
+    # --- Bloco 8: HISTORICO_DEBITO_VALOR (2500 * 4 = 10000 bytes) ---
+    li $v0, 15
+    move $a0, $s0
+    la $a1, HISTORICO_DEBITO_VALOR
+    li $a2, 10000
+    syscall
+    
+    # --- Bloco 9: HISTORICO_DEBITO_QTD (50 * 4 = 200 bytes) ---
+    li $v0, 15
+    move $a0, $s0
+    la $a1, HISTORICO_DEBITO_QTD
+    li $a2, 200
+    syscall
+    
+    # --- Bloco 10: HISTORICO_CREDITO_VALOR (10000 bytes) ---
+    li $v0, 15
+    move $a0, $s0
+    la $a1, HISTORICO_CREDITO_VALOR
+    li $a2, 10000
+    syscall
+    
+    # --- Bloco 11: HISTORICO_CREDITO_QTD (200 bytes) ---
+    li $v0, 15
+    move $a0, $s0
+    la $a1, HISTORICO_CREDITO_QTD
+    li $a2, 200
+    syscall
+    
+    # --- Bloco 12: HISTORICO_CREDITO_TIPO (10000 bytes) ---
+    li $v0, 15
+    move $a0, $s0
+    la $a1, HISTORICO_CREDITO_TIPO
+    li $a2, 10000
+    syscall
+    
+    # --- Bloco 13: O RELÓGIO (6 words = 24 bytes) ---
+    li $v0, 15
+    move $a0, $s0
+    la $a1, DATA_DIA        # Salvamos o bloco de memória a partir do primeiro
+    li $a2, 24              # 6 words * 4 bytes
+    syscall
+    
+    # --- Bloco 14: CONTROLE DE TEMPO (2 words = 8 bytes) ---
+    li $v0, 15
+    move $a0, $s0
+    la $a1, LAST_TIME_CHECK
+    li $a2, 8
+    syscall
+    
+    # 3. FECHAR O ARQUIVO (Syscall 16)
+    li $v0, 16
+    move $a0, $s0           # Passa o FD do arquivo que queremos fechar
+    syscall
+
+    # 4. FEEDBACK DE SUCESSO
+    li $v0, 4
+    la $a0, str_sucesso_salvar
+    syscall
+    j salvar_fim
+
+salvar_erro:
+    li $v0, 4
+    la $a0, str_erro_salvar
+    syscall
+
+salvar_fim:
+    lw $s0, 0($sp)
+    lw $ra, 4($sp)
+    addi $sp, $sp, 8
     j shell_loop
 
 # ==============================================================================
