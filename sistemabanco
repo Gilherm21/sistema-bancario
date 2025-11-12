@@ -37,6 +37,8 @@
     .align 2
     HISTORICO_CREDITO_VALOR: .word 0:2500  # Guarda até 50 valores de transação por cliente
     HISTORICO_CREDITO_QTD:   .word 0:50    # Contador de quantas transações cada cliente fez
+    .align 2
+    HISTORICO_CREDITO_TIPO: .word 0:2500
 
     # --- Buffers de Processamento de Texto ---
     buffer_cmd:     .space 256      # Armazena a linha de comando completa digitada pelo usuário
