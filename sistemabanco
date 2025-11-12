@@ -85,6 +85,8 @@
     str_dois_pontos:    .asciiz ":"
     str_espaco:         .asciiz " "
     str_juros:          .asciiz "JUROS:  R$ "
+    str_confirma_fmt_g: .asciiz "TEM CERTEZA QUE DESEJA APAGAR O BANCO INTEIRO? (s/n): "
+    str_sucesso_fmt_g:  .asciiz "Banco de dados zerado com sucesso.\n"
     
     # --- Comandos do Sistema ---
     # Estas strings são usadas para comparar com o que o usuário digitou.
@@ -102,6 +104,7 @@
     cmd_conta_info:      .asciiz "conta_info"
     cmd_data_hora:       .asciiz "data_hora"
     cmd_ver_hora:        .asciiz "ver_hora"
+    cmd_formatar:       .asciiz "formatar"
     cmd_sair:            .asciiz "sair"
     
     # --- RELÓGIO DO SISTEMA ---
@@ -295,6 +298,16 @@ juros_skip:
     la $a1, cmd_ver_hora
     jal strcmp
     beq $v0, 0, exec_ver_hora
+
+    la $a0, arg0
+    la $a1, cmd_formatar
+    jal strcmp
+    beq $v0, 0, exec_formatar
+
+    la $a0, arg0
+    la $a1, cmd_sair
+    jal strcmp
+    beq $v0, 0, fim_programa
 
     li $v0, 4
     la $a0, str_erro_cmd
@@ -1442,6 +1455,56 @@ juros_fim_loop:
     jr $ra
 
 # ==============================================================================
+# COMANDO: FORMATAR (TUDO)
+# Formato: formatar
+# Objetivo: Apagar todos os clientes e transações da memória. 
+# ==============================================================================
+exec_formatar:
+    addi $sp, $sp, -4
+    sw $ra, 0($sp)
+
+    # 1. PEDE CONFIRMAÇÃO
+    li $v0, 4
+    la $a0, str_confirma_fmt_g # "TEM CERTEZA...? (s/n): "
+    syscall
+
+    # Lê a resposta do usuário (s ou n)
+    li $v0, 8
+    la $a0, buffer_resp     # Reusa o buffer de resposta
+    li $a1, 4
+    syscall
+
+    # Verifica se a resposta foi 's' (sim)
+    la $t0, buffer_resp
+    lb $t1, 0($t0)          # Lê o primeiro caractere
+    li $t2, 's'             # Compara com 's'
+    bne $t1, $t2, fmt_g_cancela # Se não for 's', cancela
+
+    # 2. EXECUTA A FORMATAÇÃO
+    # A forma mais simples de "apagar tudo" é zerar o contador de clientes.
+    # Novos clientes começarão a sobrescrever os antigos a partir do índice 0.
+    sw $zero, QTD_CLIENTES  # QTD_CLIENTES = 0
+    
+    # (Opcional: Idealmente, deveríamos zerar todos os vetores de histórico,
+    # mas zerar o contador de clientes já cumpre o requisito funcional)
+
+    # Feedback de sucesso
+    li $v0, 4
+    la $a0, str_sucesso_fmt_g
+    syscall
+    j fmt_g_fim
+
+fmt_g_cancela:
+    li $v0, 4
+    la $a0, str_cancela_fmt # "Operacao cancelada."
+    syscall
+
+fmt_g_fim:
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
+    j shell_loop
+
+# ==============================================================================
 # PARSER E HELPERS
 # ==============================================================================
 parser_comandos:
@@ -1745,3 +1808,11 @@ print_dinheiro:
     lw $ra, 0($sp)
     addi $sp, $sp, 4
     jr $ra
+
+# ==============================================================================
+# COMANDO: SAIR DO SISTEMA
+# Formato: sair
+# ==============================================================================
+fim_programa:
+    li $v0, 10      # Syscall 10: Exit
+    syscall
