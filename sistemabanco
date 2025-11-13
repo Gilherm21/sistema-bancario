@@ -131,7 +131,9 @@
     filename:           .asciiz "banco.dat"
     
     # 3. Recarregar
-    
+    str_sucesso_recar:  .asciiz "Dados recarregados com sucesso.\n"
+    str_erro_recar:     .asciiz "Falha ao abrir/ler o arquivo.\n"
+    cmd_recarregar:     .asciiz "recarregar"
     
 .text
 .globl main
@@ -242,11 +244,6 @@ juros_skip:
     beq $v0, 0, exec_cadastrar
 
     la $a0, arg0
-    la $a1, cmd_sair
-    jal strcmp
-    beq $v0, 0, fim_programa
-    
-    la $a0, arg0
     la $a1, cmd_debito_extrato   # Verifica se o comando é "debito_extrato"
     jal strcmp
     beq $v0, 0, exec_debito_extrato  # Se for igual, pula para a função
@@ -320,6 +317,11 @@ juros_skip:
     la $a1, cmd_salvar
     jal strcmp
     beq $v0, 0, exec_salvar
+    
+    la $a0, arg0
+    la $a1, cmd_recarregar
+    jal strcmp
+    beq $v0, 0, exec_recarregar
 
     la $a0, arg0
     la $a1, cmd_sair
@@ -1667,6 +1669,149 @@ salvar_fim:
     j shell_loop
 
 # ==============================================================================
+# COMANDO: RECARREGAR
+# Formato esperado: recarregar
+# Objetivo: Ler o arquivo "banco.dat" e carregar na memória.
+# ==============================================================================
+exec_recarregar:
+    addi $sp, $sp, -8
+    sw $ra, 4($sp)
+    sw $s0, 0($sp)          # Salvaremos o "File Descriptor"
+
+    # 1. ABRIR O ARQUIVO (Syscall 13)
+    # Abre o arquivo para LEITURA (flag = 0)
+    li $v0, 13
+    la $a0, filename        # $a0 = Endereço do nome do arquivo
+    li $a1, 0               # $a1 = Flags (0 = Leitura)
+    li $a2, 0
+    syscall
+    
+    blt $v0, $zero, recar_erro
+    move $s0, $v0           # Salva o FD em $s0
+
+    # 2. LER OS DADOS DO ARQUIVO (Syscall 14)
+    
+    # --- Bloco 1: QTD_CLIENTES (4 bytes) ---
+    li $v0, 14
+    move $a0, $s0
+    la $a1, QTD_CLIENTES
+    li $a2, 4
+    syscall
+    
+    # --- Bloco 2: CLIENTES_CPF (600 bytes) ---
+    li $v0, 14
+    move $a0, $s0
+    la $a1, CLIENTES_CPF
+    li $a2, 600
+    syscall
+
+    # --- Bloco 3: CLIENTES_CONTA (350 bytes) ---
+    li $v0, 14
+    move $a0, $s0
+    la $a1, CLIENTES_CONTA
+    li $a2, 350
+    syscall
+    
+    # --- Bloco 4: CLIENTES_NOME (2500 bytes) ---
+    li $v0, 14
+    move $a0, $s0
+    la $a1, CLIENTES_NOME
+    li $a2, 2500
+    syscall
+
+    # --- Bloco 5: CLIENTES_SALDO (200 bytes) ---
+    li $v0, 14
+    move $a0, $s0
+    la $a1, CLIENTES_SALDO
+    li $a2, 200
+    syscall
+    
+    # --- Bloco 6: CLIENTES_LIMITE (200 bytes) ---
+    li $v0, 14
+    move $a0, $s0
+    la $a1, CLIENTES_LIMITE
+    li $a2, 200
+    syscall
+    
+    # --- Bloco 7: CLIENTES_FATURA (200 bytes) ---
+    li $v0, 14
+    move $a0, $s0
+    la $a1, CLIENTES_FATURA
+    li $a2, 200
+    syscall
+    
+    # --- Bloco 8: HISTORICO_DEBITO_VALOR (10000 bytes) ---
+    li $v0, 14
+    move $a0, $s0
+    la $a1, HISTORICO_DEBITO_VALOR
+    li $a2, 10000
+    syscall
+    
+    # --- Bloco 9: HISTORICO_DEBITO_QTD (200 bytes) ---
+    li $v0, 14
+    move $a0, $s0
+    la $a1, HISTORICO_DEBITO_QTD
+    li $a2, 200
+    syscall
+    
+    # --- Bloco 10: HISTORICO_CREDITO_VALOR (10000 bytes) ---
+    li $v0, 14
+    move $a0, $s0
+    la $a1, HISTORICO_CREDITO_VALOR
+    li $a2, 10000
+    syscall
+    
+    # --- Bloco 11: HISTORICO_CREDITO_QTD (200 bytes) ---
+    li $v0, 14
+    move $a0, $s0
+    la $a1, HISTORICO_CREDITO_QTD
+    li $a2, 200
+    syscall
+    
+    # --- Bloco 12: HISTORICO_CREDITO_TIPO (10000 bytes) ---
+    li $v0, 14
+    move $a0, $s0
+    la $a1, HISTORICO_CREDITO_TIPO
+    li $a2, 10000
+    syscall
+    
+    # --- Bloco 13: O RELÓGIO (24 bytes) ---
+    li $v0, 14
+    move $a0, $s0
+    la $a1, DATA_DIA
+    li $a2, 24
+    syscall
+    
+    # --- Bloco 14: CONTROLE DE TEMPO (8 bytes) ---
+    li $v0, 14
+    move $a0, $s0
+    la $a1, LAST_TIME_CHECK
+    li $a2, 8
+    syscall
+    
+    # 3. FECHAR O ARQUIVO (Syscall 16)
+    li $v0, 16
+    move $a0, $s0
+    syscall
+
+    # 4. FEEDBACK DE SUCESSO
+    li $v0, 4
+    la $a0, str_sucesso_recar
+    syscall
+    j recar_fim
+
+recar_erro:
+    li $v0, 4
+    la $a0, str_erro_recar
+    syscall
+
+recar_fim:
+    lw $s0, 0($sp)
+    lw $ra, 4($sp)
+    addi $sp, $sp, 8
+    j shell_loop
+
+# ==============================================================================
 # PARSER E HELPERS
 # ==============================================================================
 parser_comandos:
@@ -1771,6 +1916,10 @@ strcpy_l:
 strcpy_f:
     jr $ra
 
+# ==============================================================================
+# COMANDO: SAIR DO SISTEMA
+# Formato: sair
+# ==============================================================================
 fim_programa:
     li $v0, 10
     syscall
@@ -1971,10 +2120,3 @@ print_dinheiro:
     addi $sp, $sp, 4
     jr $ra
 
-# ==============================================================================
-# COMANDO: SAIR DO SISTEMA
-# Formato: sair
-# ==============================================================================
-fim_programa:
-    li $v0, 10      # Syscall 10: Exit
-    syscall
